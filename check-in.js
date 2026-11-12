@@ -24,17 +24,11 @@ const esc = (value) =>
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
 async function request(action, body = {}) {
-  let response;
-  try {
-    response = await fetch("/api/checkin", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action, ...body }),
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    throw new Error("The connection is slow or has dropped. Scan again.");
-  }
+  const response = await fetch("/api/checkin", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action, ...body }),
+  });
   const data = await response.json().catch(() => ({
     ok: false,
     message: "Check-in is temporarily unavailable.",
@@ -250,7 +244,6 @@ async function scan(code) {
     await loadOverview();
   } catch (error) {
     if (error.status === 401) {
-      state.busy = false;
       await stopCamera();
       state.authenticated = false;
       return loginView("Your scanner session expired. Enter the PIN again.");

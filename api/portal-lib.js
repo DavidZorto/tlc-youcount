@@ -18,10 +18,11 @@ const clearSession = res => res.setHeader("Set-Cookie", "tlc_portal=; Path=/; Ht
 const clientIp=req=>String(req.headers["x-forwarded-for"]||req.socket?.remoteAddress||"unknown").split(",")[0].trim();
 const requireRole = (user, roles) => user && roles.includes(user.role);
 const pcAuth = () => `Basic ${Buffer.from(`${process.env.pc_clientid}:${process.env.pc_secret}`).toString("base64")}`;
-async function pc(app, path) { if (!process.env.pc_clientid || !process.env.pc_secret) return null; const r = await fetch(`https://api.planningcenteronline.com/${app}/v2${path}`, {signal:AbortSignal.timeout(15000),headers:{Authorization:pcAuth(),Accept:"application/json","User-Agent":"TLC Team Member Portal"}}); if (!r.ok) throw new Error("planning_center_unavailable"); return r.json(); }
-async function pcAttempt(app,path){if(!process.env.pc_clientid||!process.env.pc_secret)return{status:503,doc:null,error:"credentials_missing"};const r=await fetch(`https://api.planningcenteronline.com/${app}/v2${path}`,{signal:AbortSignal.timeout(15000),headers:{Authorization:pcAuth(),Accept:"application/json","User-Agent":"TLC Team Member Portal"}});let doc=null;try{doc=await r.json()}catch{}return{status:r.status,doc:r.ok?doc:null,error:r.ok?null:doc?.errors?.map(x=>({status:x.status,title:x.title,detail:x.detail})).slice(0,3)||null}}
+async function pc(app, path) { if (!process.env.pc_clientid || !process.env.pc_secret) return null; const r = await fetch(`https://api.planningcenteronline.com/${app}/v2${path}`, {headers:{Authorization:pcAuth(),Accept:"application/json","User-Agent":"TLC Team Member Portal"}}); if (!r.ok) throw new Error("planning_center_unavailable"); return r.json(); }
+async function pcAttempt(app,path){if(!process.env.pc_clientid||!process.env.pc_secret)return{status:503,doc:null,error:"credentials_missing"};const r=await fetch(`https://api.planningcenteronline.com/${app}/v2${path}`,{headers:{Authorization:pcAuth(),Accept:"application/json","User-Agent":"TLC Team Member Portal"}});let doc=null;try{doc=await r.json()}catch{}return{status:r.status,doc:r.ok?doc:null,error:r.ok?null:doc?.errors?.map(x=>({status:x.status,title:x.title,detail:x.detail})).slice(0,3)||null}}
 async function database() { if (!dbUrl()) return null; return neon(dbUrl()); }
-async function runMigrate(db) {
+async function migrate(db) {
+  if (!db) return;
   await db.query(`CREATE TABLE IF NOT EXISTS portal_join_requests (id text PRIMARY KEY, person_id text NOT NULL, person_name text NOT NULL, team_id text NOT NULL, team_name text NOT NULL, message text NOT NULL DEFAULT '', status text NOT NULL DEFAULT 'pending', decided_by text, decision_note text, created_at timestamptz NOT NULL DEFAULT now(), decided_at timestamptz)`);
   await db.query(`CREATE TABLE IF NOT EXISTS portal_role_assignments (id text PRIMARY KEY, person_id text NOT NULL, person_name text NOT NULL, role text NOT NULL, team_id text, team_name text, status text NOT NULL DEFAULT 'active', granted_by text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
   await db.query(`CREATE TABLE IF NOT EXISTS portal_documents (id text PRIMARY KEY, title text NOT NULL, summary text NOT NULL DEFAULT '', team_id text, team_name text NOT NULL DEFAULT 'All teams', file_type text NOT NULL DEFAULT 'GUIDE', source_url text, owner_id text NOT NULL, owner_name text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
@@ -39,22 +40,6 @@ async function runMigrate(db) {
   await db.query(`CREATE TABLE IF NOT EXISTS portal_event_assignments (id text PRIMARY KEY,event_id text NOT NULL REFERENCES portal_events(id) ON DELETE CASCADE,person_id text NOT NULL REFERENCES portal_accounts(person_id) ON DELETE CASCADE,person_name text NOT NULL,position text NOT NULL,status text NOT NULL DEFAULT 'pending',response_note text NOT NULL DEFAULT '',responded_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),UNIQUE(event_id,person_id))`);
   await db.query(`CREATE INDEX IF NOT EXISTS portal_events_team_date_idx ON portal_events(team_id,event_date)`);
   await db.query(`CREATE INDEX IF NOT EXISTS portal_assignments_person_idx ON portal_event_assignments(person_id,status)`);
-}
-// Every portal request calls migrate. The statements above run only when they
-// change (once per deploy that edits them); otherwise this is one SELECT, or
-// nothing once this server instance has checked.
-const SCHEMA_VERSION = crypto.createHash("sha256").update(runMigrate.toString()).digest("hex").slice(0, 16);
-let schemaReady = false;
-async function migrate(db) {
-  if (!db || schemaReady) return;
-  let current = null;
-  try { current = (await db.query("SELECT value FROM portal_schema_state WHERE name='schema_version' LIMIT 1"))[0]?.value; } catch {}
-  if (current !== SCHEMA_VERSION) {
-    await runMigrate(db);
-    await db.query("CREATE TABLE IF NOT EXISTS portal_schema_state (name text PRIMARY KEY, value text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())");
-    await db.query("INSERT INTO portal_schema_state(name,value) VALUES('schema_version',$1) ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=now()", [SCHEMA_VERSION]);
-  }
-  schemaReady = true;
 }
 async function consumeRate(db,bucket,subject,limit,minutes){const rows=await db.query(`INSERT INTO portal_rate_limits(bucket,subject_hash,window_started_at,attempts) VALUES($1,$2,now(),1) ON CONFLICT(bucket,subject_hash) DO UPDATE SET window_started_at=CASE WHEN portal_rate_limits.window_started_at<now()-($3::text||' minutes')::interval THEN now() ELSE portal_rate_limits.window_started_at END,attempts=CASE WHEN portal_rate_limits.window_started_at<now()-($3::text||' minutes')::interval THEN 1 ELSE portal_rate_limits.attempts+1 END RETURNING attempts`,[bucket,subject,minutes]);return Number(rows[0]?.attempts||1)<=limit}
 function passwordHash(password){const salt=crypto.randomBytes(16).toString("base64url"),derived=crypto.scryptSync(String(password),salt,64).toString("base64url");return `scrypt:${salt}:${derived}`}

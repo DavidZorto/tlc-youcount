@@ -41,7 +41,7 @@ async function launch(req, res) {
     const cookie = sessionCookie(payload.app);
     if (cookie) res.setHeader("Set-Cookie", cookie);
     try {
-      const db = await L.ensureDb();
+      const db = await L.migrateDb();
       await L.audit(db, null, L.hash(L.clientIp(req)), "servespace_launch", { personId: String(payload.sub), app: payload.app }, "approved");
     } catch {}
     res.setHeader("Cache-Control", "no-store");
@@ -68,7 +68,7 @@ const isoDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
 async function summary(req, res) {
   if (!authorised(req)) return L.json(res, 401, { ok: false });
   try {
-    const db = await L.ensureDb();
+    const db = await L.migrateDb();
     const view = String(req.query?.view || "summary");
     if (view === "status") return L.json(res, 200, { ok: true, service: "YouCount", checkedAt: new Date().toISOString() });
     if (view === "checkins") {

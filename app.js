@@ -1577,21 +1577,12 @@ function render() {
   scheduleJourneyPresence();
   scheduleAdminRefresh();
 }
-// A request on weak mobile signal can stall with no error. Give up after a
-// limit so the button comes back and the person sees a message they can act on.
-async function timedFetch(url, options, ms) {
-  try {
-    return await fetch(url, { ...options, signal: AbortSignal.timeout(ms) });
-  } catch {
-    throw new Error("The connection is slow or has dropped. Please check your signal and try again.");
-  }
-}
 async function api(action, body = {}) {
-  const response = await timedFetch("/api/member", {
+  const response = await fetch("/api/member", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ action, session: state.sessionToken, ...body }),
-  }, 45000);
+  });
   const data = await response.json().catch(() => ({
     ok: false,
     message: "The service is temporarily unavailable.",
@@ -1611,21 +1602,21 @@ async function ensureVisitorSession(force = false) {
   return result.session;
 }
 async function surveyApi(answers) {
-  const response = await timedFetch("/api/survey", {
+  const response = await fetch("/api/survey", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ answers, surveyId: SURVEY_BROWSER_ID }),
-  }, 30000);
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok) throw new Error(data.message || "Survey unavailable");
   return data;
 }
 async function adminApi(action, body = {}) {
-  const response = await timedFetch("/api/admin", {
+  const response = await fetch("/api/admin", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({ action, ...body }),
-  }, 30000);
+  });
   const data = await response.json().catch(() => ({ ok: false }));
   if (!response.ok) {
     const error = new Error(data.message || data.code || "admin_request_failed");
@@ -2488,9 +2479,9 @@ function bind() {
         state.step = 3;
         saveDraft();
         render();
-      } catch (error) {
+      } catch {
         button.disabled = false;
-        alert(error.message || "The service is temporarily unavailable. Please try again.");
+        alert("The service is temporarily unavailable. Please try again.");
       }
     };
   if ($("#retryEvidence"))
