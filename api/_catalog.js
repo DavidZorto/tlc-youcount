@@ -367,35 +367,24 @@ async function syncCustomFields(db) {
   return { tabs: tabsDoc.data.length, customFields: definitions.length };
 }
 async function syncCatalogues(db) {
-  let custom;
-  try {
-    custom = await syncCustomFields(db);
-  } catch (error) {
-    throw new Error(`custom_fields_sync_failed:${error.message}`);
+  // Each part runs even if an earlier one fails, so a Planning Center hiccup in
+  // groups does not leave member search on yesterday's people. Failures are
+  // reported together afterwards so the job still shows as failed.
+  const result = {},
+    failures = [];
+  for (const [name, run] of [
+    ["custom_fields", syncCustomFields],
+    ["groups", syncGroups],
+    ["memberships", syncMemberships],
+    ["people", syncPeople],
+  ]) {
+    try {
+      Object.assign(result, await run(db));
+    } catch (error) {
+      failures.push(`${name}_sync_failed:${error.message}`);
+    }
   }
-  let groups;
-  try {
-    groups = await syncGroups(db);
-  } catch (error) {
-    throw new Error(`groups_sync_failed:${error.message}`);
-  }
-  let memberships;
-  try {
-    memberships = await syncMemberships(db);
-  } catch (error) {
-    throw new Error(`memberships_sync_failed:${error.message}`);
-  }
-  let people;
-  try {
-    people = await syncPeople(db);
-  } catch (error) {
-    throw new Error(`people_sync_failed:${error.message}`);
-  }
-  return {
-    ...groups,
-    ...memberships,
-    ...custom,
-    ...people,
-  };
+  if (failures.length) throw new Error(failures.join(";"));
+  return result;
 }
 module.exports = { syncCatalogues, syncGroups, syncPeople, syncMemberships };

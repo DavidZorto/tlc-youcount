@@ -211,8 +211,12 @@ module.exports = async function handler(req, res) {
            SELECT id,submitted_payload FROM review_records
            WHERE identity_id=i.id ORDER BY updated_at DESC,id DESC LIMIT 1
          ) r ON true
-         WHERE i.identity_number=$1 OR upper(i.public_id)=upper($1)
-            OR EXISTS (SELECT 1 FROM tlc_identity_aliases a WHERE a.identity_id=i.id AND upper(a.alias)=upper($1))
+         WHERE i.id=(
+           SELECT id FROM tlc_identities WHERE identity_number=$1
+           UNION ALL SELECT id FROM tlc_identities WHERE upper(public_id)=upper($1)
+           UNION ALL SELECT identity_id FROM tlc_identity_aliases WHERE upper(alias)=upper($1)
+           LIMIT 1
+         )
          LIMIT 1`,
         [publicId],
       );

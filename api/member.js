@@ -358,7 +358,7 @@ async function sendIdentityReceipt(db, email, firstName, identity, changes = {},
     ),
   };
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const response = await fetch(url, request);
+    const response = await fetch(url, { ...request, signal: AbortSignal.timeout(15000) });
     if (response.ok) return "sent";
     const retryable = response.status === 429 || response.status >= 500;
     console.error("Identity receipt provider rejected request", {
@@ -920,6 +920,7 @@ async function sendTwilio(to) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/Verifications`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -937,6 +938,7 @@ async function checkTwilio(to, code) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/VerificationCheck`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",

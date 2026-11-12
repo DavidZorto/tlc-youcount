@@ -402,6 +402,17 @@ async function migrateDb() {
   await db.query(
     `CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events(created_at)`,
   );
+  // Check-in scans and staff lists look up a person's latest submission and
+  // match QR codes case-insensitively; without these they read whole tables.
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS review_records_identity_latest_idx ON review_records(identity_id,updated_at DESC,id DESC)`,
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS tlc_identities_public_id_upper_idx ON tlc_identities(upper(public_id))`,
+  );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS tlc_identity_aliases_upper_idx ON tlc_identity_aliases(upper(alias))`,
+  );
   return db;
 }
 // Request handlers call ensureDb instead of migrateDb. The full migration takes
