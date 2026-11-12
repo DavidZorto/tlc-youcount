@@ -2469,9 +2469,9 @@ function bind() {
         state.step = 3;
         saveDraft();
         render();
-      } catch {
+      } catch (error) {
         button.disabled = false;
-        alert("The service is temporarily unavailable. Please try again.");
+        alert(error.message || "The service is temporarily unavailable. Please try again.");
       }
     };
   if ($("#retryEvidence"))

@@ -1725,6 +1725,11 @@ module.exports = async function handler(req, res) {
         message: "Please wait before trying again.",
       });
     if (action === "evidence") {
+      if (s.verified_at)
+        return L.json(res, 409, {
+          ok: false,
+          message: "This session is already verified. Please start again to use different details.",
+        });
       const email = L.normalizeEmail(req.body?.email),
         last3 = L.digits(req.body?.last3).slice(-3);
       const payload = L.decrypt(s.payload);
@@ -1815,9 +1820,17 @@ module.exports = async function handler(req, res) {
           approved = await checkTwilio(otpPhone, code);
       } catch {}
       const attemptRows = await db.query(
-        "UPDATE verification_sessions SET attempts=CASE WHEN $2 THEN attempts ELSE attempts+1 END,verified_at=CASE WHEN $2 THEN now() ELSE verified_at END,expires_at=CASE WHEN $2 THEN now()+interval '2 hours' ELSE expires_at END,locked_until=CASE WHEN NOT $2 AND attempts+1>=3 THEN now()+interval '30 minutes' ELSE locked_until END,updated_at=now() WHERE id=$1 RETURNING attempts,locked_until",
+        // Failures count afresh once an earlier lock has expired, and the WHERE
+        // clause refuses a session another request locked after the check above.
+        "UPDATE verification_sessions SET attempts=CASE WHEN $2 THEN attempts ELSE (CASE WHEN locked_until<=now() THEN 0 ELSE attempts END)+1 END,verified_at=CASE WHEN $2 THEN now() ELSE verified_at END,expires_at=CASE WHEN $2 THEN now()+interval '2 hours' ELSE expires_at END,locked_until=CASE WHEN NOT $2 AND (CASE WHEN locked_until<=now() THEN 0 ELSE attempts END)+1>=3 THEN now()+interval '30 minutes' WHEN locked_until<=now() THEN NULL ELSE locked_until END,updated_at=now() WHERE id=$1 AND (locked_until IS NULL OR locked_until<=now()) RETURNING attempts,locked_until",
         [s.id, approved],
       );
+      if (!attemptRows.length)
+        return L.json(res, 429, {
+          ok: false,
+          locked: true,
+          message: "This session is temporarily locked.",
+        });
       const attempts = Number(attemptRows[0]?.attempts || 0),
         locked = !approved && Boolean(attemptRows[0]?.locked_until);
       await L.audit(
@@ -1910,7 +1923,7 @@ module.exports = async function handler(req, res) {
       });
       const subjectHash = L.hash(`member:${person.id}`);
       const pendingRows = await db.query(
-        "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 AND status='pending' LIMIT 1",
+        "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 AND status IN ('pending','follow_up') LIMIT 1",
         [subjectHash],
       );
       const pendingSubmission = pendingRows[0]

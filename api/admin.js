@@ -793,15 +793,25 @@ module.exports = async function handler(req, res) {
           "rejected",
           "completed",
         ]),
-        status = allowedStatuses.has(String(req.body?.status))
-          ? String(req.body.status)
-          : "pending";
-      if (!Number.isSafeInteger(id) || id < 1)
+        status = String(req.body?.status || "");
+      if (!Number.isSafeInteger(id) || id < 1 || !allowedStatuses.has(status))
         return L.json(res, 400, { ok: false });
-      await db.query(
-        "UPDATE review_records SET status=$1,active_subject_hash=CASE WHEN $1 IN ('completed','updated_pc','rejected') THEN NULL ELSE active_subject_hash END,updated_at=now() WHERE id=$2",
+      const updated = await db.query(
+        "UPDATE review_records SET status=$1,active_subject_hash=CASE WHEN $1 IN ('completed','updated_pc','rejected') THEN NULL ELSE active_subject_hash END,updated_at=now() WHERE id=$2 RETURNING planning_center_ids,active_subject_hash",
         [status, id],
       );
+      // Reopening a closed record re-links it to its member, as maintenance_setup
+      // does, so the member's next submission updates it instead of starting a
+      // new record. Skipped when another open record already holds the member.
+      if (updated[0] && !updated[0].active_subject_hash && ["pending", "follow_up"].includes(status))
+        try {
+          const personId = L.decrypt(updated[0].planning_center_ids)?.[0];
+          if (personId)
+            await db.query(
+              "UPDATE review_records SET active_subject_hash=$1 WHERE id=$2 AND active_subject_hash IS NULL AND NOT EXISTS (SELECT 1 FROM review_records WHERE active_subject_hash=$1)",
+              [L.hash(`member:${personId}`), id],
+            );
+        } catch {}
       await L.audit(
         db,
         null,

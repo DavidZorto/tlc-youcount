@@ -244,6 +244,7 @@ async function scan(code) {
     await loadOverview();
   } catch (error) {
     if (error.status === 401) {
+      state.busy = false;
       await stopCamera();
       state.authenticated = false;
       return loginView("Your scanner session expired. Enter the PIN again.");
