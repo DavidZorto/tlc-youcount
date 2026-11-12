@@ -130,12 +130,33 @@ async function syncPeople(db) {
         `${item.tab_name || ""} ${item.name || ""}`.trim(),
       ]),
     ),
-    runId = L.token();
+    runId = L.token(),
+    startedAt = new Date();
+  // Nightly runs fetch only people changed since the previous run. A full run,
+  // which also marks people removed from Planning Center as inactive, happens
+  // weekly, when the cache key changes, or when no earlier run is recorded.
+  const state = Object.fromEntries(
+      (
+        await db.query(
+          `SELECT name,value FROM pc_sync_state WHERE name IN ('people_cache_ready','people_full_sync_at','people_sync_since')`,
+        )
+      ).map((row) => [row.name, row.value]),
+    ),
+    lastFull = Date.parse(state.people_full_sync_at || ""),
+    since = Date.parse(state.people_sync_since || ""),
+    full =
+      state.people_cache_ready !== L.hash("pc-cache-key-v1") ||
+      !(lastFull > startedAt - 7 * 24 * 60 * 60 * 1000) ||
+      !since,
+    // One hour of overlap covers clock skew and edits made during the last run.
+    filter = full
+      ? ""
+      : `&where[updated_at][gte]=${encodeURIComponent(new Date(since - 60 * 60 * 1000).toISOString())}`;
   let offset = 0,
     count = 0;
   for (; offset < 100000; offset += 100) {
     const page = await L.pcFetch(
-        `/people?include=addresses,emails,phone_numbers,field_data,households.people&per_page=100&offset=${offset}`,
+        `/people?include=addresses,emails,phone_numbers,field_data,households.people&per_page=100&offset=${offset}${filter}`,
       ),
       people = page.data || [],
       rows = people.map((person) =>
@@ -170,18 +191,24 @@ async function syncPeople(db) {
     count += people.length;
     if (people.length < 100) break;
   }
-  if (count)
+  if (full && count)
     await db.query(
       `UPDATE pc_people_cache SET active=false,synced_at=now() WHERE sync_run_id<>$1`,
       [runId],
     );
   await db.query(
     `INSERT INTO pc_sync_state(name,value,updated_at)
-     VALUES('people_cache_ready',$1,now())
+     VALUES('people_cache_ready',$1,now()),('people_sync_since',$2,now())
      ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=now()`,
-    [L.hash("pc-cache-key-v1")],
+    [L.hash("pc-cache-key-v1"), startedAt.toISOString()],
   );
-  return { people: count };
+  if (full && count)
+    await db.query(
+      `INSERT INTO pc_sync_state(name,value,updated_at) VALUES('people_full_sync_at',$1,now())
+       ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=now()`,
+      [startedAt.toISOString()],
+    );
+  return { people: count, peopleSync: full ? "full" : "changed_only" };
 }
 async function syncMemberships(db) {
   const runId = L.token(),

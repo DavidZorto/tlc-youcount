@@ -399,6 +399,40 @@ async function migrateDb() {
   await db.query(
     `CREATE INDEX IF NOT EXISTS audit_event_created_idx ON audit_events(event,created_at)`,
   );
+  await db.query(
+    `CREATE INDEX IF NOT EXISTS audit_created_idx ON audit_events(created_at)`,
+  );
+  return db;
+}
+// Request handlers call ensureDb instead of migrateDb. The full migration takes
+// about 100 statements and table locks, so it runs only when its source changes
+// (once per deploy that edits it), and the nightly maintenance job still runs it.
+const SCHEMA_VERSION = crypto
+  .createHash("sha256")
+  .update(migrateDb.toString())
+  .digest("hex")
+  .slice(0, 16);
+let schemaReady = false;
+async function ensureDb() {
+  const db = await initDb();
+  if (schemaReady) return db;
+  let current = null;
+  try {
+    current = (
+      await db.query(
+        "SELECT value FROM pc_sync_state WHERE name='schema_version' LIMIT 1",
+      )
+    )[0]?.value;
+  } catch {}
+  if (current !== SCHEMA_VERSION) {
+    await migrateDb();
+    await db.query(
+      `INSERT INTO pc_sync_state(name,value,updated_at) VALUES('schema_version',$1,now())
+       ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=now()`,
+      [SCHEMA_VERSION],
+    );
+  }
+  schemaReady = true;
   return db;
 }
 async function consumeRate(db, bucket, subjectHash, limit, windowMinutes) {
@@ -566,6 +600,7 @@ module.exports = {
   sql,
   initDb,
   migrateDb,
+  ensureDb,
   consumeRate,
   hash,
   safeEqual,

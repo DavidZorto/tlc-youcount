@@ -124,7 +124,7 @@ module.exports = async function handler(req, res) {
     const action = String(req.body?.action || ""),
       ipHash = L.hash(L.clientIp(req));
     if (action === "login") {
-      const db = await L.migrateDb(),
+      const db = await L.ensureDb(),
         pin = String(req.body?.pin || "");
       if (!(await L.consumeRate(db, "checkin_staff_login", ipHash, 8, 30)))
         return L.json(res, 429, {
@@ -155,7 +155,7 @@ module.exports = async function handler(req, res) {
       return L.json(res, 200, { ok: true });
     }
     if (!authorised(req)) return L.json(res, 401, { ok: false });
-    const db = ["headcount"].includes(action) ? await L.migrateDb() : await L.initDb();
+    const db = ["headcount"].includes(action) ? await L.ensureDb() : await L.initDb();
     if (action === "overview")
       return L.json(res, 200, { ok: true, ...(await overview(db, req.body || {})) });
     if (action === "headcount") {

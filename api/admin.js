@@ -58,21 +58,22 @@ async function refreshPastoralCases(db) {
          )`,
       [olderSunday, [olderSunday, latestSunday]],
     );
-  let created = 0;
-  for (const candidate of candidates) {
-    let changes = {};
-    try { changes = L.decrypt(candidate.submitted_payload)?.changes || {}; } catch {}
-    if (!["member", "attendee"].includes(String(changes.membershipStatus || "")))
-      continue;
-    const inserted = await db.query(
-      `INSERT INTO pastoral_cases(identity_id,trigger_key,missed_from,missed_to)
-       VALUES($1,$2,$3::date,$4::date)
-       ON CONFLICT(identity_id,trigger_key) DO NOTHING RETURNING id`,
-      [candidate.id, `${olderSunday}:${latestSunday}`, olderSunday, latestSunday],
-    );
-    created += inserted.length;
-  }
-  return { created, olderSunday, latestSunday };
+  const identityIds = candidates
+    .filter((candidate) => {
+      let changes = {};
+      try { changes = L.decrypt(candidate.submitted_payload)?.changes || {}; } catch {}
+      return ["member", "attendee"].includes(String(changes.membershipStatus || ""));
+    })
+    .map((candidate) => candidate.id);
+  const inserted = identityIds.length
+    ? await db.query(
+        `INSERT INTO pastoral_cases(identity_id,trigger_key,missed_from,missed_to)
+         SELECT id,$2,$3::date,$4::date FROM unnest($1::bigint[]) AS id
+         ON CONFLICT(identity_id,trigger_key) DO NOTHING RETURNING id`,
+        [identityIds, `${olderSunday}:${latestSunday}`, olderSunday, latestSunday],
+      )
+    : [];
+  return { created: inserted.length, olderSunday, latestSunday };
 }
 async function pastoralCaseList(db, status = "active") {
   const rows = await db.query(
@@ -199,7 +200,7 @@ module.exports = async function handler(req, res) {
   try {
     const action = String(req.body?.action || "");
     if (action === "pastoralLogin") {
-      const db = await L.migrateDb(), ipHash = L.hash(L.clientIp(req)), submitted = String(req.body?.pin || "");
+      const db = await L.ensureDb(), ipHash = L.hash(L.clientIp(req)), submitted = String(req.body?.pin || "");
       if (!(await L.consumeRate(db, "pastoral_staff_login", ipHash, 8, 30)))
         return L.json(res, 429, { ok: false, message: "Too many attempts. Ask the pastoral-care lead for help." });
       if (!pastoralPin() || !L.safeEqual(submitted, pastoralPin())) {
@@ -216,11 +217,11 @@ module.exports = async function handler(req, res) {
     }
     if (action === "pastoralWorkspace" || action === "pastoralWorkspaceUpdate") {
       if (!pastoralAuthorised(req)) return L.json(res, 401, { ok: false, message: "Your pastoral-care session has expired." });
-      const db = await L.migrateDb();
+      const db = await L.ensureDb();
       if (action === "pastoralWorkspace") {
         const status = ["active", "all", "open", "contacted", "resolved", "dismissed"].includes(String(req.body?.status || "")) ? String(req.body.status) : "active",
-          refresh = await refreshPastoralCases(db), cases = await pastoralCaseList(db, status);
-        return L.json(res, 200, { ok: true, status, monitoring: { rule: "Two consecutive completed Sundays after a member's first recorded Sunday check-in", ...refresh }, cases });
+          [olderSunday, latestSunday] = completedSundayDates(), cases = await pastoralCaseList(db, status);
+        return L.json(res, 200, { ok: true, status, monitoring: { rule: "Two consecutive completed Sundays after a member's first recorded Sunday check-in", olderSunday, latestSunday }, cases });
       }
       const caseId = Number(req.body?.caseId || 0), status = String(req.body?.status || ""),
         assignedTo = cleanCheckinText(req.body?.assignedTo, 100), resolution = cleanCheckinText(req.body?.resolution, 200),
@@ -287,7 +288,7 @@ module.exports = async function handler(req, res) {
       return L.json(res, 200, { ok: true, ...(await syncCatalogues(db)) });
     }
     const db = ["checkinOverview", "pastoralCases", "pastoralCaseUpdate"].includes(action)
-      ? await L.migrateDb()
+      ? await L.ensureDb()
       : await L.initDb();
     if (action === "checkinOverview") {
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.date || ""))
@@ -391,14 +392,15 @@ module.exports = async function handler(req, res) {
       const status = ["active", "all", "open", "contacted", "resolved", "dismissed"].includes(
           String(req.body?.status || ""),
         ) ? String(req.body.status) : "active",
-        refresh = await refreshPastoralCases(db),
+        [olderSunday, latestSunday] = completedSundayDates(),
         cases = await pastoralCaseList(db, status);
       return L.json(res, 200, {
         ok: true,
         status,
         monitoring: {
           rule: "Two consecutive completed Sundays after a member's first recorded Sunday check-in",
-          ...refresh,
+          olderSunday,
+          latestSunday,
         },
         cases,
         counts: cases.reduce((result, item) => {
@@ -954,3 +956,4 @@ module.exports = async function handler(req, res) {
     return L.json(res, 503, { ok: false });
   }
 };
+module.exports.refreshPastoralCases = refreshPastoralCases;

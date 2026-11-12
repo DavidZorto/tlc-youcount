@@ -796,7 +796,12 @@ async function findPeopleByName(db, name) {
           ? await db.query(
               `SELECT profile_payload FROM pc_people_cache
                WHERE active=true AND key_fingerprint=$2 AND name_hashes && $1::text[]
-               ORDER BY source_updated_at DESC NULLS LAST LIMIT 500`,
+               -- Records sharing the most name fragments with the entered name
+               -- come first, so the 500-row cap drops weak partial matches
+               -- (any shared three letters) rather than the person searched for.
+               ORDER BY (SELECT count(*) FROM unnest(name_hashes) AS h WHERE h = ANY($1::text[])) DESC,
+                        source_updated_at DESC NULLS LAST
+               LIMIT 500`,
               [hashes, L.hash("pc-cache-key-v1")],
             )
           : [],
@@ -1501,7 +1506,12 @@ module.exports = async function handler(req, res) {
     // This is an emergency network ceiling, not a per-member allowance.
     // Individual browsers and verified sessions have tighter limits below so
     // a congregation sharing church Wi-Fi is not treated as one person.
-    if (!(await L.consumeRate(db, "request_network", ipHash, 10000, 15)))
+    // Presence pings arrive every 30 seconds from every open journey and have
+    // their own per-journey limit, so they do not count toward this ceiling.
+    if (
+      action !== "presence" &&
+      !(await L.consumeRate(db, "request_network", ipHash, 30000, 15))
+    )
       return L.json(res, 429, {
         ok: false,
         message: "Please wait before trying again.",
@@ -1634,7 +1644,7 @@ module.exports = async function handler(req, res) {
           ok: false,
           message: "Please wait before trying another search.",
         });
-      if (!(await L.consumeRate(db, "name_search_network", ipHash, 2000, 15)))
+      if (!(await L.consumeRate(db, "name_search_network", ipHash, 5000, 15)))
         return L.json(res, 429, {
           ok: false,
           message:

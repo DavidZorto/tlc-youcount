@@ -1,5 +1,6 @@
 const L = require("./_lib");
 const { syncCatalogues } = require("./_catalog");
+const { refreshPastoralCases } = require("./admin");
 module.exports = async function handler(req, res) {
   if (req.method !== "GET") return L.json(res, 405, { ok: false });
   if (
@@ -23,6 +24,18 @@ module.exports = async function handler(req, res) {
       await db.query(
         "DELETE FROM rate_limits WHERE window_started_at < now()-interval '1 day'",
       );
+      await db.query(
+        "DELETE FROM journey_presence WHERE last_seen_at < now()-interval '2 days'",
+      );
+      // The team portal creates this table on first use, so it may not exist yet.
+      try {
+        await db.query(
+          "DELETE FROM portal_rate_limits WHERE window_started_at < now()-interval '1 day'",
+        );
+      } catch {}
+      // Staff screens list pastoral cases; finding new ones runs here, after
+      // each Sunday's check-ins, instead of on every screen load.
+      await refreshPastoralCases(db);
       if (job === "cleanup") return L.json(res, 200, { ok: true, job });
     }
     const lock = await db.query(
