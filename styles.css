@@ -4353,6 +4353,9 @@ body {
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
 @media (max-width: 650px) {
+  #app:has(.faq-fab) .campaign-private {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
   .app.profile-editing ~ .faq-fab {
     bottom: calc(75px + env(safe-area-inset-bottom));
   }

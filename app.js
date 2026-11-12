@@ -630,7 +630,7 @@ function member() {
 }
 function campaignHome() {
   if (!state.campaignStarted)
-    return `<div class="app campaign-home"><main class="campaign-hero campaign-welcome"><div class="campaign-shade"></div><header class="campaign-header campaign-welcome-header">${campaignWordmark()}</header><section class="campaign-welcome-copy"><h1>YouCount<span>.</span></h1><div class="campaign-typing-wrap"><span class="campaign-typed" aria-hidden="true">You matter. You are seen.</span><span class="sr-only">You matter. You are seen.</span></div><div class="campaign-entry-actions"><button class="campaign-continue" id="campaignContinue">Get my YouCount Number <span aria-hidden="true">→</span></button><button class="campaign-survey-link" id="openSurvey">Church health survey</button><button class="campaign-survey-link" id="openFaq">Questions? Read the FAQ</button></div></section><p class="campaign-private">Private, secure and designed for your phone.</p></main><button class="admin-dot campaign-admin-dot" id="adminDot" aria-label="Staff access" title="Staff access"></button></div>`;
+    return `<div class="app campaign-home"><main class="campaign-hero campaign-welcome"><div class="campaign-shade"></div><header class="campaign-header campaign-welcome-header">${campaignWordmark()}</header><section class="campaign-welcome-copy"><h1>YouCount<span>.</span></h1><div class="campaign-typing-wrap"><span class="campaign-typed" aria-hidden="true">You matter. You are seen.</span><span class="sr-only">You matter. You are seen.</span></div><div class="campaign-entry-actions"><button class="campaign-continue" id="campaignContinue">Get my YouCount Number <span aria-hidden="true">→</span></button><button class="campaign-survey-link" id="openSurvey">Church health survey</button></div></section><p class="campaign-private">Private, secure and designed for your phone.</p></main><button class="admin-dot campaign-admin-dot" id="adminDot" aria-label="Staff access" title="Staff access"></button></div>`;
   if (!state.journeyType)
     return `<div class="app campaign-home"><main class="campaign-hero campaign-form-stage"><div class="campaign-shade"></div><header class="campaign-header">${campaignWordmark()}<button class="journey-close" id="profileClose" aria-label="Close profile update"><span>Close</span> ×</button></header><section class="campaign-form-panel journey-choice-panel"><span class="campaign-kicker">Before we begin</span><h1>Which best describes you?</h1><p>This helps us give you the right, shortest journey.</p><div class="journey-choices"><button data-journey="member"><b>I am a TLC member</b><span>I have completed Connect.</span></button><button data-journey="attendee"><b>I attend TLC</b><span>I have not completed Connect, or I’m unsure.</span></button><button data-journey="visitor"><b>I’m new or visiting</b><span>I’m attending TLC for the first time or still exploring.</span></button></div><small>You can correct this choice before submitting.</small>${privacyNotice(true)}</section></main><button class="admin-dot campaign-admin-dot" id="adminDot" aria-label="Staff access" title="Staff access"></button></div>`;
   return `<div class="app campaign-home"><main class="campaign-hero campaign-form-stage"><div class="campaign-shade"></div><header class="campaign-header">${campaignWordmark()}<button class="journey-close" id="profileClose" aria-label="Close profile update"><span>Close</span> ×</button></header><section class="campaign-form-panel"><span class="campaign-kicker">Your profile matters</span><h1>Let’s begin with your name.</h1><p>Use the first name you registered with at TLC. A short form is fine, such as Tolu for Toluwalope, Funmi for Olufunmilayo, Chi for Chioma or Sam for Samuel.</p><div class="field searchbox"><span>⌕</span><input id="search" placeholder="First name or short form" value="${esc(state.search)}" autocomplete="name" aria-label="First name or short form used at TLC"></div><button class="btn full" id="searchBtn">Continue securely <span aria-hidden="true">→</span></button><small>The short name must contain at least 3 characters from your registered first name. No member list is shown.</small>${privacyNotice(true)}</section></main><button class="admin-dot campaign-admin-dot" id="adminDot" aria-label="Staff access" title="Staff access"></button></div>`;
@@ -1571,7 +1571,7 @@ function render() {
                 : state.mode === "events"
                   ? eventOperationsComingSoon()
                 : admin();
-  if (state.mode === "survey" || (state.mode === "member" && (state.campaignStarted || state.step > 1)))
+  if (state.mode === "survey" || state.mode === "member")
     document.getElementById("app").insertAdjacentHTML("beforeend", faqHelp());
   bind();
   scheduleJourneyPresence();
@@ -1921,13 +1921,6 @@ function bind() {
     $("#openSurvey").onclick = () => {
       state.mode = "survey";
       history.replaceState(null, "", "#survey");
-      render();
-      scrollTo(0, 0);
-    };
-  if ($("#openFaq"))
-    $("#openFaq").onclick = () => {
-      state.mode = "faq";
-      history.replaceState(null, "", "#faq");
       render();
       scrollTo(0, 0);
     };
