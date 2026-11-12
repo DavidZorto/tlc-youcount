@@ -3668,6 +3668,21 @@ body {
   width: 100%;
   height: auto;
 }
+.google-wallet-button:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+.wallet-action-status {
+  min-height: 18px;
+  margin: 5px 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.45;
+  text-align: center;
+}
+.wallet-action-status:empty { display: none; }
+.wallet-action-status.error { color: #9d1c25; }
 .google-wallet-pending { margin: 3px 8px 10px; color: #738191; font-size: 10px; line-height: 1.5; }
 .wallet-test-note {
   display: none;

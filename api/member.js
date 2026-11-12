@@ -240,6 +240,7 @@ function redesignedIdentityEmail({
   changes,
   walletEligible,
   appleWalletUrl,
+  googleWalletUrl,
   nextStepsHtml,
 }) {
   const fullName = `${changes.firstName || firstName || ""} ${changes.lastName || ""}`.trim(),
@@ -268,8 +269,8 @@ function redesignedIdentityEmail({
       ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:420px;margin:0 auto;background:#003264;border-radius:14px;overflow:hidden"><tr><td style="padding:20px 22px 0"><table role="presentation" width="100%"><tr><td><img src="${appUrl}/assets/youcount-card/logo-white.png" width="80" alt="The Liberty Church" style="display:block;width:80px;height:auto;border:0"></td><td align="right" style="color:#fff;font-size:13px;font-weight:700">YouCount<br><span style="color:#aeb9cc;font-size:12px;font-weight:400">Counted ${countedYear}</span></td></tr></table></td></tr><tr><td><table role="presentation" width="100%"><tr><td style="padding:24px 0 20px 22px;color:#fff"><div style="margin-bottom:28px;white-space:nowrap"><span style="color:#f0a500;font-size:15px;font-weight:800">${html(roleCode)}</span>&nbsp;&nbsp;<span style="font-size:32px;font-weight:800">${html(numberSpaced)}</span></div><div style="font-size:16px;font-weight:600">${html(fullName)}</div><div style="margin-top:3px;color:#c3ccdb;font-size:12px">${html(roleLabel)} &middot; ${html(location)}</div></td><td width="160" valign="bottom" style="line-height:0"><img src="${appUrl}/assets/email/youcount-card-ribbon@3x.png" width="160" height="180" alt="" style="display:block;width:160px;height:180px;border:0"></td></tr></table></td></tr></table>`
       : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:420px;margin:0 auto;border:1px solid #e6ddd6;border-radius:12px;background:#fcf9f6"><tr><td align="center" style="padding:24px 22px"><div style="margin-bottom:10px;color:#1b3a6b;font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase">Your YouCount number</div><div style="white-space:nowrap"><span style="color:#1b3a6b;font-size:15px;font-weight:800">${html(roleCode)}</span>&nbsp;&nbsp;<span style="color:#1f1a17;font-size:32px;font-weight:800">${html(numberSpaced)}</span></div><div style="margin-top:10px;font-size:16px">${html(fullName)} &middot; ${html(location)}</div><div style="margin-top:14px;color:#6b625d;font-size:14px">Complete Connect to unlock your digital YouCount card.</div></td></tr></table>`,
     walletHtml =
-      walletEligible && appleWalletUrl
-        ? `<tr><td align="center" style="padding:28px 28px 0"><p style="margin:0 0 14px;font-size:16px;font-weight:600">Add your card to your phone</p><a href="${html(appleWalletUrl)}" style="display:inline-block;min-width:190px;padding:12px 20px;border-radius:9px;background:#000;color:#fff;text-decoration:none;font-size:16px;font-weight:700">&#63743;&nbsp; Add to Apple Wallet</a><p style="margin:12px 0 0;color:#6b625d;font-size:13px">On a computer? Open this email on your iPhone to add it.</p></td></tr>`
+      walletEligible && (appleWalletUrl || googleWalletUrl)
+        ? `<tr><td align="center" style="padding:28px 28px 0"><p style="margin:0 0 14px;font-size:16px;font-weight:600">Add your card to your phone</p>${appleWalletUrl ? `<a href="${html(appleWalletUrl)}" style="display:inline-block;min-width:190px;margin:0 4px 10px;padding:12px 20px;border-radius:9px;background:#000;color:#fff;text-decoration:none;font-size:16px;font-weight:700">&#63743;&nbsp; Add to Apple Wallet</a>` : ""}${googleWalletUrl ? `<a href="${html(googleWalletUrl)}" style="display:inline-block;margin:0 4px 10px;text-decoration:none"><img src="${appUrl}/assets/google-wallet/add-to-google-wallet-en-gb.png" width="230" height="41" alt="Add to Google Wallet" style="display:block;width:230px;max-width:100%;height:auto;border:0"></a>` : ""}<p style="margin:4px 0 0;color:#6b625d;font-size:13px">Choose the wallet used on your phone.</p></td></tr>`
         : "";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>You're counted</title></head><body style="margin:0;padding:0;background:#f5f1ed;font-family:Arial,Helvetica,sans-serif;color:#1f1a17"><div style="display:none;max-height:0;overflow:hidden">Your YouCount number is ${html(publicId)}. It is yours for life.</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f5f1ed"><tr><td align="center" style="padding:12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:760px;background:#fff;border-radius:14px;overflow:hidden"><tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="table-layout:fixed"><tr><td height="6" bgcolor="#e84b4b"></td><td bgcolor="#3b82f6"></td><td bgcolor="#f0a500"></td><td bgcolor="#16a34a"></td><td bgcolor="#7c3aed"></td></tr></table></td></tr><tr><td align="center" style="padding:28px 28px 0"><img src="${appUrl}/assets/email/tlc-logo-colour.png" width="112" alt="The Liberty Church" style="display:block;width:112px;height:auto;border:0"></td></tr><tr><td align="center" style="padding:28px 28px 8px"><div style="margin-bottom:10px;color:#1b3a6b;font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">YouCount</div><h1 style="margin:0;color:#1f1a17;font-size:28px;line-height:1.2">You're counted${firstName ? `, ${html(firstName)}` : ""}</h1></td></tr><tr><td align="center" style="padding:12px 28px 0"><p style="max-width:460px;margin:0;color:#1f1a17;font-size:16px;line-height:1.7">Thank you for completing your profile. Here is your YouCount number. It is yours for life, so keep this email.</p></td></tr><tr><td style="padding:28px 28px 0">${cardHtml}</td></tr>${walletHtml}<tr><td style="padding:28px">${nextStepsHtml || ""}<p style="margin:32px 0 2px;color:#1b3a6b;font-family:Georgia,serif;font-size:24px;font-style:italic">With love,</p><p style="margin:0;color:#6b625d;font-size:14px;line-height:1.6"><strong style="color:#1f1a17">The Data Team</strong><br>The Liberty Church Global</p></td></tr><tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="table-layout:fixed"><tr><td height="6" bgcolor="#7c3aed"></td><td bgcolor="#16a34a"></td><td bgcolor="#f0a500"></td><td bgcolor="#3b82f6"></td><td bgcolor="#e84b4b"></td></tr></table></td></tr></table><p style="max-width:700px;margin:22px auto 0;color:#6b625d;font-size:12px;line-height:1.7;text-align:center">If anything on your card is wrong, email the Data Team at <a href="mailto:datateam@thelibertychurchlondon.com" style="color:#1b3a6b">datateam@thelibertychurchlondon.com</a>.<br>Liberty Point, 4 High Elms, Woodford Green, Essex IG8 0UP, United Kingdom<br>&copy; ${countedYear} The Liberty Church Global · <a href="https://thelibertychurchlondon.com/privacy-policy/" style="color:#6b625d">Privacy notice</a></p></td></tr></table></body></html>`;
 }
@@ -290,18 +291,15 @@ async function sendIdentityReceipt(db, email, firstName, identity, changes = {},
   const appUrl = String(
       process.env.YOUCOUNT_PUBLIC_URL || "https://youcount.thelibertychurchlondon.com",
     ).replace(/\/$/, ""),
-    appleWalletUrl = walletAttachment
-      ? `${appUrl}/api/member?action=emailApplePass&token=${encodeURIComponent(
-          L.encrypt({ identityId: identity.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 }),
-        )}`
+    walletEmailToken = walletEligible
+      ? L.encrypt({ identityId: identity.id, expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000 })
+      : "",
+    appleWalletUrl = walletEmailToken
+      ? `${appUrl}/api/member?action=emailApplePass&token=${encodeURIComponent(walletEmailToken)}`
+      : null,
+    googleWalletUrl = walletEmailToken
+      ? `${appUrl}/api/member?action=emailGoogleWallet&token=${encodeURIComponent(walletEmailToken)}`
       : null;
-  let googleWalletUrl = null;
-  if (walletEligible && googleWalletConfig())
-    try {
-      googleWalletUrl = await googleWalletLink(identity, changes);
-    } catch (error) {
-      console.error("Identity email Google Wallet link skipped", error.message);
-    }
   const fromAddress =
       process.env.IDENTITY_FROM_EMAIL || "hello@penielsense.co.uk",
     fromName = process.env.IDENTITY_FROM_NAME || "The Liberty Church",
@@ -323,6 +321,7 @@ async function sendIdentityReceipt(db, email, firstName, identity, changes = {},
     changes,
     walletEligible,
     appleWalletUrl,
+    googleWalletUrl,
     nextStepsHtml,
   });
   const provider = sendGridKey ? "sendgrid" : "resend";
@@ -1477,11 +1476,14 @@ module.exports = async function handler(req, res) {
   if (typeof req.body === "string")
     req.body = Object.fromEntries(new URLSearchParams(req.body));
   const requestedAction = String(req.body?.action || req.query?.action || "");
-  const passkitRequest = requestedAction === "passkit";
+  const passkitRequest = requestedAction === "passkit",
+    emailWalletRequest = ["emailApplePass", "emailGoogleWallet"].includes(
+      requestedAction,
+    );
   if (
     !passkitRequest &&
     req.method !== "POST" &&
-    !(req.method === "GET" && requestedAction === "emailApplePass")
+    !(req.method === "GET" && emailWalletRequest)
   )
     return L.json(res, 405, { ok: false });
   try {
@@ -1540,6 +1542,74 @@ module.exports = async function handler(req, res) {
       } catch (error) {
         console.error("Email Apple pass generation failed", error.message);
         return L.json(res, 500, { ok: false, message: "The Apple Wallet card could not be created. Please try again." });
+      }
+    }
+    if (action === "emailGoogleWallet") {
+      let signed;
+      try {
+        signed = L.decrypt(String(req.query?.token || ""));
+      } catch {
+        return L.json(res, 403, {
+          ok: false,
+          message: "This Wallet link is invalid.",
+        });
+      }
+      const identityId = Number(signed?.identityId),
+        expiresAt = Number(signed?.expiresAt);
+      if (
+        !Number.isSafeInteger(identityId) ||
+        identityId < 1 ||
+        !expiresAt ||
+        expiresAt < Date.now()
+      )
+        return L.json(res, 403, {
+          ok: false,
+          message:
+            "This Wallet link has expired. Request a new email from YouCount.",
+        });
+      if (
+        !(await L.consumeRate(
+          db,
+          "email_google_wallet",
+          L.hash(`identity:${identityId}:${req.query.token}`),
+          10,
+          60,
+        ))
+      )
+        return L.json(res, 429, {
+          ok: false,
+          message: "Please wait before opening the pass again.",
+        });
+      const records = await db.query(
+        `SELECT r.submitted_payload,r.kind,i.id,i.public_id,i.identity_number,i.role_code,i.status,i.created_at,i.connect_eligible
+         FROM review_records r
+         JOIN tlc_identities i ON i.id=r.identity_id
+         WHERE i.id=$1
+         ORDER BY r.updated_at DESC,r.id DESC LIMIT 1`,
+        [identityId],
+      );
+      const record = records[0];
+      if (
+        !record ||
+        record.kind === "manual_review" ||
+        !record.connect_eligible
+      )
+        return L.json(res, 403, {
+          ok: false,
+          message: "This YouCount Card is not currently available.",
+        });
+      try {
+        const changes = L.decrypt(record.submitted_payload)?.changes || {},
+          link = await googleWalletLink(record, changes);
+        res.setHeader("Cache-Control", "private, no-store");
+        return res.redirect(303, link);
+      } catch (error) {
+        console.error("Email Google Wallet generation failed", error.message);
+        return L.json(res, 500, {
+          ok: false,
+          message:
+            "The Google Wallet card could not be created. Please try again.",
+        });
       }
     }
     if (action === "addressLookup")
@@ -1659,6 +1729,55 @@ module.exports = async function handler(req, res) {
       );
       await sleep(350);
       return L.json(res, 200, { ...generic, session: raw });
+    }
+    if (action === "visitorStart") {
+      const browserId = String(req.body?.browserId || "").slice(0, 100);
+      if (!/^[a-zA-Z0-9_-]{16,100}$/.test(browserId))
+        return L.json(res, 400, {
+          ok: false,
+          message: "Please refresh the page and try again.",
+        });
+      if (
+        !(await L.consumeRate(
+          db,
+          "visitor_session_browser",
+          L.hash(`visitor-browser:${browserId}`),
+          10,
+          15,
+        ))
+      )
+        return L.json(res, 429, {
+          ok: false,
+          message: "Please wait before continuing.",
+        });
+      if (!(await L.consumeRate(db, "visitor_session_network", ipHash, 2000, 15)))
+        return L.json(res, 429, {
+          ok: false,
+          message:
+            "There are unusually many visitor sessions on this network. Please wait and try again.",
+        });
+      const raw = L.token(),
+        payload = {
+          name: "",
+          people: [],
+          manualReviewAllowed: true,
+          manualReviewKind: "visitor",
+          visitor: true,
+          uploadedPhotos: [],
+        },
+        rows = await db.query(
+          "INSERT INTO verification_sessions(token_hash,ip_hash,payload,expires_at) VALUES($1,$2,$3,now()+interval '2 hours') RETURNING id",
+          [L.hash(raw), ipHash, L.encrypt(payload)],
+        );
+      await L.audit(
+        db,
+        rows[0].id,
+        ipHash,
+        "visitor_session_started",
+        null,
+        "ready",
+      );
+      return L.json(res, 200, { ok: true, session: raw });
     }
     const s = await session(db, req.body?.session);
     if (!s)
@@ -2279,6 +2398,8 @@ module.exports = async function handler(req, res) {
           "issued",
         );
         res.setHeader("Cache-Control", "private, no-store");
+        if (req.body?.response === "json")
+          return L.json(res, 200, { ok: true, url: link });
         return res.redirect(303, link);
       } catch (error) {
         console.error("Google Wallet generation failed", error.message);
