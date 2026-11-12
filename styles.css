@@ -4177,6 +4177,196 @@ body {
   margin-top: 7vh;
   text-align: center;
 }
+.faq-item {
+  border-top: 1px solid #e3eaf0;
+}
+.faq-item:last-child {
+  border-bottom: 1px solid #e3eaf0;
+}
+.faq-item summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-item summary::after {
+  content: "+";
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #eef4f9;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 400;
+}
+.faq-item[open] summary::after {
+  content: "−";
+  background: var(--gold);
+  color: #fff;
+}
+.faq-item p {
+  margin: -4px 44px 18px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.faq-item a,
+.faq-contact a {
+  color: var(--ink);
+  font-weight: 700;
+}
+.faq-contact {
+  margin: 26px 0 22px;
+  border-left: 3px solid var(--gold);
+}
+.faq-fab {
+  position: fixed;
+  z-index: 45;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 18px 0 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 10px 30px rgba(0, 31, 61, 0.3);
+  cursor: pointer;
+}
+.faq-fab i {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #fff;
+  font-style: normal;
+  font-size: 17px;
+}
+.faq-sheet {
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: 100%;
+  max-height: 85dvh;
+  margin: 0;
+  padding: 0 20px calc(22px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 -20px 60px rgba(0, 31, 61, 0.25);
+}
+.faq-sheet[open] {
+  animation: faqSheetUp 0.25s ease;
+}
+.faq-sheet::backdrop {
+  background: rgba(0, 24, 47, 0.5);
+  backdrop-filter: blur(2px);
+}
+.faq-sheet > header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 -20px 6px;
+  padding: 22px 20px 14px;
+  background: #fff;
+}
+.faq-sheet > header::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 40px;
+  height: 4px;
+  margin-left: -20px;
+  border-radius: 4px;
+  background: #d5e0ea;
+}
+.faq-sheet h2 {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  text-transform: none;
+}
+.faq-sheet > header button {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: #eef4f9;
+  color: var(--ink);
+  font-size: 24px;
+  cursor: pointer;
+}
+.faq-sheet .faq-contact {
+  margin-bottom: 0;
+}
+@keyframes faqSheetUp {
+  from { transform: translateY(40px); opacity: 0; }
+}
+#app:has(.faq-fab) > .survey-page,
+#app:has(.faq-fab) .member-shell {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+@media (max-width: 650px) {
+  #app:has(.faq-fab) .campaign-private {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+  .app.profile-editing ~ .faq-fab {
+    bottom: calc(75px + env(safe-area-inset-bottom));
+  }
+}
+@media (min-width: 651px) {
+  .faq-sheet {
+    inset: 0;
+    width: min(600px, calc(100% - 40px));
+    max-height: 80vh;
+    margin: auto;
+    padding-inline: 32px;
+    border-radius: 22px;
+  }
+  .faq-sheet > header {
+    margin-inline: -32px;
+    padding-inline: 32px;
+  }
+  .faq-sheet > header::before {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .faq-sheet[open] {
+    animation: none;
+  }
+}
 .survey-admin-lock {
   width: min(480px, 100%);
   margin-top: 30px;

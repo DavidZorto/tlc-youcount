@@ -429,6 +429,7 @@ const state = {
   ],
 };
 if (location.hash === "#survey") state.mode = "survey";
+if (location.hash === "#faq") state.mode = "faq";
 if (SAVED_DRAFT?.workflow) Object.assign(state, SAVED_DRAFT.workflow);
 if (
   state.step === 6 &&
@@ -649,6 +650,26 @@ function communicationMethodField() {
         .filter(Boolean);
   const options = ["Email", "SMS / text message", "Phone call", "WhatsApp", "Postal mail"];
   return `<fieldset class="field communication-methods"><legend>How may we contact you? <span class="required-mark">Required</span></legend><p class="hint">Choose all that apply.</p><div class="checkbox-grid">${options.map((value) => `<label><input type="checkbox" name="communicationPreference" value="${value}" ${selected.includes(value) ? "checked" : ""}><span>${value}</span></label>`).join("")}</div><p class="communication-error" role="alert" hidden>Choose at least one contact method.</p></fieldset>`;
+}
+const FAQS = [
+  ["What is YouCount?", "YouCount is how The Liberty Church keeps its member records accurate. You confirm or update your details once and receive a YouCount Number, which is yours for life."],
+  ["How do I get my YouCount Number?", "Tap “Get my YouCount Number”, enter your name, then confirm the last three digits of your phone number and your full email address. We send you a one-time code, and once it is confirmed you can check and update your profile."],
+  ["Why do you ask me to verify who I am?", "To protect your information. We never show a list of members or confirm whether a record exists, and your profile only opens after you enter the one-time code sent to your email or phone."],
+  ["My one-time code has not arrived. What should I do?", `Check your spam or junk folder and wait a minute before asking for a new code. If it still does not arrive, choose to contact the Data Team on that screen or email <a href="mailto:${DATA_TEAM_EMAIL}">${DATA_TEAM_EMAIL}</a>.`],
+  ["When will my changes appear in church records?", "Your updates are reviewed by the Data Team before church records are changed, so they may not appear straight away."],
+  ["I have lost my YouCount Number.", `We email your YouCount Number when you complete your profile, so search your inbox for it first. If you cannot find it, contact <a href="mailto:${DATA_TEAM_EMAIL}">${DATA_TEAM_EMAIL}</a>.`],
+  ["Who can see my information?", "Only authorised members of the Data Team at The Liberty Church Global. Your information is stored securely and is never shown to other members."],
+  ["Is the church health survey anonymous?", "Yes. It does not ask for your name, contact details or YouCount Number, and your answers are kept apart from your profile. Responses are deleted after 90 days."],
+  ["I used a shared or church phone. Is my information left on it?", "When you finish, tap “Start again”. This clears your details from the phone, ready for the next person."],
+];
+function faqList() {
+  return `<div class="faq-list">${FAQS.map(([question, answer]) => `<details class="faq-item"><summary>${question}</summary><p>${answer}</p></details>`).join("")}</div><div class="notice faq-contact"><b>Still have a question?</b> Email the Data Team at <a href="mailto:${DATA_TEAM_EMAIL}">${DATA_TEAM_EMAIL}</a>.</div>`;
+}
+function faqPage() {
+  return `<div class="survey-page"><header>${campaignWordmark()}<button class="journey-close" id="faqClose" aria-label="Close FAQ"><span>Close</span> ×</button></header><main class="survey-card"><span class="campaign-kicker">Frequently asked questions</span><h1>Questions, answered.</h1><p class="survey-intro">Everything you need to know about YouCount, your number and how we look after your information.</p>${faqList()}<button class="btn full" id="faqHome">Return home</button></main></div>`;
+}
+function faqHelp() {
+  return `<button class="faq-fab" id="faqFab" aria-haspopup="dialog"><i aria-hidden="true">?</i>Help</button><dialog class="faq-sheet" id="faqSheet" aria-labelledby="faqSheetTitle"><header><div><span class="campaign-kicker">Need help?</span><h2 id="faqSheetTitle">Questions, answered.</h2></div><button id="faqSheetClose" aria-label="Close help">×</button></header>${faqList()}</dialog>`;
 }
 function surveyScale(name, label) {
   return `<fieldset class="survey-question"><legend>${label}</legend><div class="survey-scale">${[5, 4, 3, 2, 1].map((value) => `<label><input type="radio" name="${name}" value="${value}" required><span>${value}</span></label>`).join("")}</div><div class="survey-scale-labels"><span>Strongly agree</span><span>Strongly disagree</span></div></fieldset>`;
@@ -1536,6 +1557,8 @@ function render() {
   document.getElementById("app").innerHTML =
     state.mode === "survey"
       ? surveyPage()
+      : state.mode === "faq"
+      ? faqPage()
       : state.mode === "member"
         ? member()
         : state.mode === "workspace-hub"
@@ -1549,6 +1572,8 @@ function render() {
                 : state.mode === "events"
                   ? eventOperationsComingSoon()
                 : admin();
+  if (state.mode === "survey" || state.mode === "member")
+    document.getElementById("app").insertAdjacentHTML("beforeend", faqHelp());
   bind();
   scheduleJourneyPresence();
   scheduleAdminRefresh();
@@ -1889,6 +1914,22 @@ function bind() {
       render();
       scrollTo(0, 0);
     };
+  if ($("#faqFab")) {
+    const sheet = $("#faqSheet");
+    $("#faqFab").onclick = () => sheet.showModal();
+    $("#faqSheetClose").onclick = () => sheet.close();
+    sheet.onclick = (event) => {
+      if (event.target === sheet) sheet.close();
+    };
+  }
+  for (const id of ["#faqClose", "#faqHome"])
+    if ($(id))
+      $(id).onclick = () => {
+        state.mode = "member";
+        state.campaignStarted = false;
+        history.replaceState(null, "", location.pathname);
+        render();
+      };
   if ($("#surveyClose"))
     $("#surveyClose").onclick = () => {
       if (
