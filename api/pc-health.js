@@ -15,6 +15,7 @@ module.exports = async function handler(req, res) {
   try {
     const authorization = Buffer.from(`${clientId}:${secret}`).toString("base64");
     const response = await fetch("https://api.planningcenteronline.com/people/v2/people?per_page=1", {
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${authorization}`,
         Accept: "application/json",
