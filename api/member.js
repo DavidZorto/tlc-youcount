@@ -357,7 +357,7 @@ async function sendIdentityReceipt(db, email, firstName, identity, changes = {},
     ),
   };
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const response = await fetch(url, request);
+    const response = await fetch(url, { ...request, signal: AbortSignal.timeout(15000) });
     if (response.ok) return "sent";
     const retryable = response.status === 429 || response.status >= 500;
     console.error("Identity receipt provider rejected request", {
@@ -762,6 +762,7 @@ function nameMatches(entered, person) {
     (firstNames.includes(enteredFirst) && surname === enteredSurname)
   );
 }
+let peopleCacheReady = false;
 async function findPeopleByName(db, name) {
   const parts = enteredNameParts(name),
     cleaned = parts.join(" "),
@@ -774,10 +775,14 @@ async function findPeopleByName(db, name) {
     if (parts[0].length >= 3) variants.add(parts[0].slice(0, 3));
   }
   try {
-    const cacheState = await db.query(
-      `SELECT value FROM pc_sync_state WHERE name='people_cache_ready' LIMIT 1`,
-    );
-    if (cacheState[0]?.value === L.hash("pc-cache-key-v1")) {
+    // Once the cache is ready it stays ready, so this instance stops asking.
+    if (!peopleCacheReady) {
+      const cacheState = await db.query(
+        `SELECT value FROM pc_sync_state WHERE name='people_cache_ready' LIMIT 1`,
+      );
+      peopleCacheReady = cacheState[0]?.value === L.hash("pc-cache-key-v1");
+    }
+    if (peopleCacheReady) {
       const fragments = [
           ...new Set(
             parts.flatMap((part) => {
@@ -795,7 +800,12 @@ async function findPeopleByName(db, name) {
           ? await db.query(
               `SELECT profile_payload FROM pc_people_cache
                WHERE active=true AND key_fingerprint=$2 AND name_hashes && $1::text[]
-               ORDER BY source_updated_at DESC NULLS LAST LIMIT 500`,
+               -- Records sharing the most name fragments with the entered name
+               -- come first, so the 500-row cap drops weak partial matches
+               -- (any shared three letters) rather than the person searched for.
+               ORDER BY (SELECT count(*) FROM unnest(name_hashes) AS h WHERE h = ANY($1::text[])) DESC,
+                        source_updated_at DESC NULLS LAST
+               LIMIT 500`,
               [hashes, L.hash("pc-cache-key-v1")],
             )
           : [],
@@ -893,17 +903,18 @@ function editDistance(a, b) {
 }
 async function session(db, rawToken) {
   if (!rawToken) return null;
+  // Read the session and slide a verified session's expiry in one round trip.
   const rows = await db.query(
-    "SELECT * FROM verification_sessions WHERE token_hash=$1 AND expires_at>now() LIMIT 1",
+    `WITH s AS (
+       SELECT * FROM verification_sessions WHERE token_hash=$1 AND expires_at>now() LIMIT 1
+     ), slide AS (
+       UPDATE verification_sessions SET expires_at=now()+interval '2 hours',updated_at=now()
+       WHERE id=(SELECT id FROM s WHERE verified_at IS NOT NULL)
+     )
+     SELECT * FROM s`,
     [L.hash(rawToken)],
   );
-  const row = rows[0] || null;
-  if (row?.verified_at)
-    await db.query(
-      "UPDATE verification_sessions SET expires_at=now()+interval '2 hours',updated_at=now() WHERE id=$1",
-      [row.id],
-    );
-  return row;
+  return rows[0] || null;
 }
 async function sendTwilio(to) {
   const sid = process.env.TWILIO_ACCOUNT_SID,
@@ -914,6 +925,7 @@ async function sendTwilio(to) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/Verifications`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -931,6 +943,7 @@ async function checkTwilio(to, code) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/VerificationCheck`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -1393,94 +1406,71 @@ async function submittedPhotoData(photo) {
   }
   return planningCenterAvatarData(String(photo?.url || ""));
 }
-async function ensureIdentity(db, people, connect) {
-  const pcIds = [
-    ...new Set(people.map((person) => String(person.id)).filter(Boolean)),
-  ];
-  if (!pcIds.length) return null;
-  const found = await db.query(
-    "SELECT DISTINCT identity_id FROM tlc_identity_profiles WHERE planning_center_id=ANY($1::text[]) ORDER BY identity_id",
-    [pcIds],
+// Work queued by youcount_save_submission: Wallet updates and receipt emails.
+// Runs right after a submission replies, and from the maintenance job to retry
+// failures (up to 5 attempts, backing off 5, 20, 45, 80 minutes).
+async function processOutbox(db, { ids = null, limit = 25 } = {}) {
+  const jobs = await db.query(
+    `UPDATE outbox_jobs SET status='running',attempts=attempts+1,locked_at=now()
+     WHERE id IN (
+       SELECT id FROM outbox_jobs
+       WHERE ((status='pending' AND next_attempt_at<=now())
+          OR (status='running' AND locked_at<now()-interval '10 minutes'))
+         AND ($1::bigint[] IS NULL OR id=ANY($1::bigint[]))
+       ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED)
+     RETURNING id,kind,identity_id,payload,attempts`,
+    [ids, limit],
   );
-  let identityId = found[0]?.identity_id;
-  if (!identityId) {
-    const made = await db.query(
-      "INSERT INTO tlc_identities(status,connect_completed,connect_eligible,connect_source,connect_exception) VALUES($1,$2,$3,$4,$5) RETURNING id",
-      [
-        connect.eligible ? "full" : "provisional",
-        Boolean(connect.completed),
-        Boolean(connect.eligible),
-        connect.source || (connect.found ? "planning_center" : "unconfirmed"),
-        connect.exception || null,
-      ],
+  const summary = { done: 0, retrying: 0, failed: 0 };
+  for (const job of jobs) {
+    let outcome = "failed";
+    try {
+      if (job.kind === "wallet_update") {
+        await Wallet.notifyWalletUpdate(db, job.identity_id);
+        outcome = "sent";
+      } else if (job.kind === "identity_receipt") {
+        const data = L.decrypt(job.payload),
+          identities = await db.query(
+            "SELECT id,public_id,identity_number,role_code,status,connect_completed,connect_eligible,connect_source,connect_exception FROM tlc_identities WHERE id=$1",
+            [job.identity_id],
+          );
+        outcome = identities[0]
+          ? await sendIdentityReceipt(
+              db,
+              data.email,
+              data.firstName,
+              identities[0],
+              data.changes || {},
+              Boolean(data.walletEligible && identities[0].connect_eligible),
+            )
+          : "not_needed";
+        if (outcome === "sent")
+          await db.query(
+            "UPDATE tlc_identities SET identity_email_sent_at=now() WHERE id=$1",
+            [job.identity_id],
+          );
+        // An audit hiccup must not turn a sent email into a retry (a second email).
+        if (outcome !== "failed" || job.attempts >= 5)
+          await L.audit(db, data.sessionId, data.ipHash || "outbox", "identity_email", null, outcome).catch(
+            (error) => console.error("Outbox audit failed", error.message),
+          );
+      }
+    } catch (error) {
+      console.error("Outbox job failed", job.kind, error.message);
+      outcome = "failed";
+    }
+    const status =
+      outcome !== "failed" ? "done" : job.attempts < 5 ? "pending" : "failed";
+    summary[status === "pending" ? "retrying" : status] += 1;
+    await db.query(
+      `UPDATE outbox_jobs SET status=$2,last_outcome=$3,locked_at=NULL,
+         next_attempt_at=now()+make_interval(mins=>$4),
+         done_at=CASE WHEN $2='pending' THEN NULL ELSE now() END
+       WHERE id=$1`,
+      [job.id, status, outcome, 5 * job.attempts * job.attempts],
     );
-    identityId = made[0].id;
-    await L.setIdentityPublicId(db, identityId, {
-      eligible: Boolean(connect.eligible),
-      exception: connect.exception || null,
-    });
   }
-  for (const duplicate of found.slice(1)) {
-    await db.query(
-      "UPDATE tlc_identity_profiles SET identity_id=$1 WHERE identity_id=$2",
-      [identityId, duplicate.identity_id],
-    );
-    await db.query("DELETE FROM tlc_identities WHERE id=$1", [
-      duplicate.identity_id,
-    ]);
-  }
-  for (const pcId of pcIds)
-    await db.query(
-      "INSERT INTO tlc_identity_profiles(identity_id,planning_center_id) VALUES($1,$2) ON CONFLICT(planning_center_id) DO UPDATE SET identity_id=excluded.identity_id",
-      [identityId, pcId],
-    );
-  const approvedRoles = await db.query(
-      `SELECT role_code FROM youcount_role_registry
-       WHERE active=true AND planning_center_id=ANY($1::text[])
-       ORDER BY CASE role_code
-         WHEN 'OP' THEN 1 WHEN 'OM' THEN 2 WHEN 'OA' THEN 3 WHEN 'OD' THEN 4
-         WHEN 'OC' THEN 5 WHEN 'TL' THEN 6 WHEN 'SG' THEN 7 WHEN 'TM' THEN 8
-         ELSE 99 END LIMIT 1`,
-      [pcIds],
-    ),
-    approvedRole = approvedRoles[0]?.role_code || null,
-    ordainedException = ["OP", "OM", "OA"].includes(approvedRole),
-    effectiveConnect = ordainedException
-      ? {
-          eligible: true,
-          completed: Boolean(connect.completed),
-          source: "approved_role_lookup",
-          exception: "ordained_role",
-        }
-      : connect;
-  if (effectiveConnect.eligible)
-    await db.query(
-      `UPDATE tlc_identities
-       SET connect_completed=$1,connect_eligible=true,status='full',connect_source=$2,
-           connect_exception=$3,updated_at=now()
-       WHERE id=$4`,
-      [
-        Boolean(effectiveConnect.completed),
-        effectiveConnect.source || "planning_center",
-        effectiveConnect.exception || null,
-        identityId,
-      ],
-    );
-  if (approvedRole)
-    await L.setIdentityPublicId(db, identityId, {
-      roleCode: approvedRole,
-      source: "approved_role_lookup",
-    });
-  else if (effectiveConnect.eligible)
-    await L.setIdentityPublicId(db, identityId, {
-      eligible: true,
-      exception: effectiveConnect.exception || null,
-    });
-  const rows = await db.query(
-    "SELECT id,public_id,identity_number,role_code,status,connect_completed,connect_eligible,connect_source,connect_exception FROM tlc_identities WHERE id=$1",
-    [identityId],
-  );
-  return rows[0] || null;
+  return summary;
 }
 module.exports = async function handler(req, res) {
   if (typeof req.body === "string")
@@ -1503,7 +1493,12 @@ module.exports = async function handler(req, res) {
     // This is an emergency network ceiling, not a per-member allowance.
     // Individual browsers and verified sessions have tighter limits below so
     // a congregation sharing church Wi-Fi is not treated as one person.
-    if (!(await L.consumeRate(db, "request_network", ipHash, 10000, 15)))
+    // Presence pings arrive every 30 seconds from every open journey and have
+    // their own per-journey limit, so they do not count toward this ceiling.
+    if (
+      action !== "presence" &&
+      !(await L.consumeRate(db, "request_network", ipHash, 30000, 15))
+    )
       return L.json(res, 429, {
         ok: false,
         message: "Please wait before trying again.",
@@ -1704,7 +1699,7 @@ module.exports = async function handler(req, res) {
           ok: false,
           message: "Please wait before trying another search.",
         });
-      if (!(await L.consumeRate(db, "name_search_network", ipHash, 2000, 15)))
+      if (!(await L.consumeRate(db, "name_search_network", ipHash, 5000, 15)))
         return L.json(res, 429, {
           ok: false,
           message:
@@ -1716,17 +1711,21 @@ module.exports = async function handler(req, res) {
       } catch {}
       const raw = L.token(),
         payload = { name, people };
-      const rows = await db.query(
-        "INSERT INTO verification_sessions(token_hash,ip_hash,payload,expires_at) VALUES($1,$2,$3,now()+interval '30 minutes') RETURNING id",
-        [L.hash(raw), ipHash, L.encrypt(payload)],
-      );
-      await L.audit(
-        db,
-        rows[0].id,
-        ipHash,
-        "name_submitted",
-        { name },
-        people.length ? "possible_match" : "no_match",
+      // Create the session and its audit entry in one round trip.
+      await db.query(
+        `WITH s AS (
+           INSERT INTO verification_sessions(token_hash,ip_hash,payload,expires_at)
+           VALUES($1,$2,$3,now()+interval '30 minutes') RETURNING id
+         )
+         INSERT INTO audit_events(session_id,ip_hash,event,entered_payload,outcome)
+         SELECT id,$2,'name_submitted',$4,$5 FROM s`,
+        [
+          L.hash(raw),
+          ipHash,
+          L.encrypt(payload),
+          L.encrypt({ name }),
+          people.length ? "possible_match" : "no_match",
+        ],
       );
       await sleep(350);
       return L.json(res, 200, { ...generic, session: raw });
@@ -1844,6 +1843,11 @@ module.exports = async function handler(req, res) {
         message: "Please wait before trying again.",
       });
     if (action === "evidence") {
+      if (s.verified_at)
+        return L.json(res, 409, {
+          ok: false,
+          message: "This session is already verified. Please start again to use different details.",
+        });
       const email = L.normalizeEmail(req.body?.email),
         last3 = L.digits(req.body?.last3).slice(-3);
       const payload = L.decrypt(s.payload);
@@ -1934,25 +1938,27 @@ module.exports = async function handler(req, res) {
           approved = await checkTwilio(otpPhone, code);
       } catch {}
       const attemptRows = await db.query(
-        "UPDATE verification_sessions SET attempts=CASE WHEN $2 THEN attempts ELSE attempts+1 END,verified_at=CASE WHEN $2 THEN now() ELSE verified_at END,expires_at=CASE WHEN $2 THEN now()+interval '2 hours' ELSE expires_at END,locked_until=CASE WHEN NOT $2 AND attempts+1>=3 THEN now()+interval '30 minutes' ELSE locked_until END,updated_at=now() WHERE id=$1 RETURNING attempts,locked_until",
-        [s.id, approved],
+        // Failures count afresh once an earlier lock has expired, and the WHERE
+        // clause refuses a session another request locked after the check above.
+        // The audit entry is written in the same round trip.
+        `WITH u AS (UPDATE verification_sessions SET attempts=CASE WHEN $2 THEN attempts ELSE (CASE WHEN locked_until<=now() THEN 0 ELSE attempts END)+1 END,verified_at=CASE WHEN $2 THEN now() ELSE verified_at END,expires_at=CASE WHEN $2 THEN now()+interval '2 hours' ELSE expires_at END,locked_until=CASE WHEN NOT $2 AND (CASE WHEN locked_until<=now() THEN 0 ELSE attempts END)+1>=3 THEN now()+interval '30 minutes' WHEN locked_until<=now() THEN NULL ELSE locked_until END,updated_at=now() WHERE id=$1 AND (locked_until IS NULL OR locked_until<=now()) RETURNING attempts,locked_until),
+         a AS (
+           INSERT INTO audit_events(session_id,ip_hash,event,entered_payload,outcome)
+           SELECT $1,$3,CASE WHEN $2 THEN $4 WHEN u.locked_until IS NOT NULL THEN 'locked' ELSE 'otp_failed' END,
+                  NULL,CASE WHEN $2 THEN 'approved' ELSE 'rejected' END
+           FROM u
+         )
+         SELECT * FROM u`,
+        [s.id, approved, ipHash, testProfile ? "test_profile_verified" : "otp_verified"],
       );
+      if (!attemptRows.length)
+        return L.json(res, 429, {
+          ok: false,
+          locked: true,
+          message: "This session is temporarily locked.",
+        });
       const attempts = Number(attemptRows[0]?.attempts || 0),
         locked = !approved && Boolean(attemptRows[0]?.locked_until);
-      await L.audit(
-        db,
-        s.id,
-        ipHash,
-        approved
-          ? testProfile
-            ? "test_profile_verified"
-            : "otp_verified"
-          : locked
-            ? "locked"
-            : "otp_failed",
-        null,
-        approved ? "approved" : "rejected",
-      );
       if (!approved)
         return L.json(res, 200, {
           ok: false,
@@ -2029,7 +2035,7 @@ module.exports = async function handler(req, res) {
       });
       const subjectHash = L.hash(`member:${person.id}`);
       const pendingRows = await db.query(
-        "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 AND status='pending' LIMIT 1",
+        "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 AND status IN ('pending','follow_up') LIMIT 1",
         [subjectHash],
       );
       const pendingSubmission = pendingRows[0]
@@ -2662,11 +2668,20 @@ module.exports = async function handler(req, res) {
             ? `manual:${contactKey}`
             : `session:${s.id}`,
       );
+      // Reads first, side by side: the previous photo and the Connect status
+      // do not depend on each other.
+      const [previousRows, recordedConnect] = await Promise.all([
+        changes.photo
+          ? []
+          : db.query(
+              "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 LIMIT 1",
+              [subjectHash],
+            ),
+        // Resolve again at submission time so a newly imported Connect record
+        // cannot be missed by a browser session that was opened earlier.
+        !manual && matched.length ? resolvedConnectStatus(db, matched[0]) : null,
+      ]);
       if (!changes.photo) {
-        const previousRows = await db.query(
-          "SELECT submitted_payload FROM review_records WHERE active_subject_hash=$1 LIMIT 1",
-          [subjectHash],
-        );
         try {
           const previousPhoto = L.decrypt(previousRows[0]?.submitted_payload)?.changes?.photo;
           if (String(previousPhoto?.pathname || "").startsWith("member-photos/"))
@@ -2678,148 +2693,70 @@ module.exports = async function handler(req, res) {
           source: "planning_center",
           url: String(sessionPayload.planningCenterAvatar).slice(0, 2000),
         };
-      const rows = await db.query(
-        `INSERT INTO review_records(session_id,kind,planning_center_ids,submitted_payload,active_subject_hash,updated_at) VALUES($1,$2,$3,$4,$5,now())
-         ON CONFLICT(active_subject_hash) WHERE active_subject_hash IS NOT NULL DO UPDATE SET session_id=excluded.session_id,kind=excluded.kind,planning_center_ids=excluded.planning_center_ids,submitted_payload=excluded.submitted_payload,updated_at=now() RETURNING id,identity_id,(xmax<>0) AS updated`,
-        [
-          s.id,
-          kind,
-          L.encrypt(matched.map((x) => x.id)),
-          L.encrypt({ changes, choices }),
-          subjectHash,
-        ],
-      );
-      await L.audit(
-        db,
-        s.id,
-        ipHash,
-        rows[0]?.updated ? "submission_updated" : "submission_created",
-        null,
-        kind,
-      );
-      let identity = null;
-      if (!manual && matched.length) {
-        // Resolve again at submission time so a newly imported Connect record
-        // cannot be missed by a browser session that was opened earlier.
-        const recordedConnect = await resolvedConnectStatus(db, matched[0]);
-        // A successfully verified person who chose the member/Connect route
-        // receives their member identity and Wallet card immediately. A
-        // missing Connect-list match is retained as an explicit admin flag;
-        // it must not block the member-facing journey.
-        const connect =
-          changes.membershipStatus === "member" && !recordedConnect.eligible
-            ? {
-                ...recordedConnect,
-                eligible: true,
-                completed: false,
-                source: "member_self_declaration",
-                exception: "connect_confirmation_required",
-              }
-            : recordedConnect;
-        identity = await ensureIdentity(db, matched, connect);
-        if (identity)
-          await db.query(
-            "UPDATE review_records SET identity_id=$1 WHERE id=$2",
-            [identity.id, rows[0]?.id],
-          );
-      } else if (manual) {
-        if (rows[0]?.identity_id) {
-          const existing = await db.query(
-            "SELECT id,public_id,identity_number,role_code,status,connect_completed,connect_eligible,connect_source,connect_exception FROM tlc_identities WHERE id=$1",
-            [rows[0].identity_id],
-          );
-          identity = existing[0] || null;
-        }
-        if (!identity) {
-          const made = await db.query(
-            "INSERT INTO tlc_identities(status,connect_completed,connect_eligible,connect_source) VALUES('provisional',false,false,'manual_review') RETURNING id",
-          );
-          await L.setIdentityPublicId(db, made[0].id, {
-            roleCode:
-              changes.membershipStatus === "visitor"
-                ? "V"
-                : changes.membershipStatus === "attendee"
-                  ? "AT"
-                  : null,
-            source: "youcount_route",
-          });
-          await db.query(
-            "UPDATE review_records SET identity_id=$1 WHERE id=$2",
-            [made[0].id, rows[0]?.id],
-          );
-          const created = await db.query(
-            "SELECT id,public_id,identity_number,role_code,status,connect_completed,connect_eligible,connect_source,connect_exception FROM tlc_identities WHERE id=$1",
-            [made[0].id],
-          );
-          identity = created[0] || null;
-        }
-      }
-      if (identity) {
-        const leadershipCodes = new Set(["OP", "OM", "OA", "OD", "OC", "TL", "SG", "TM"]),
-          desiredRole = leadershipCodes.has(identity.role_code)
-            ? identity.role_code
-            : identity.connect_eligible
-              ? "CM"
-              : changes.membershipStatus === "visitor"
-                ? "V"
-                : changes.membershipStatus === "attendee"
-                  ? "AT"
-                  : null;
-        await L.setIdentityPublicId(db, identity.id, {
-          roleCode: desiredRole,
-          source: "youcount_submission",
-        });
-        const refreshed = await db.query(
-          "SELECT id,public_id,identity_number,role_code,status,connect_completed,connect_eligible,connect_source,connect_exception FROM tlc_identities WHERE id=$1",
-          [identity.id],
-        );
-        identity = refreshed[0] || identity;
-        // An existing installed pass may contain the member's name, location or
-        // role. Notify Wallet after every successful profile submission, but do
-        // not let a third-party Wallet outage fail the underlying submission.
-        try {
-          await Wallet.notifyWalletUpdate(db, identity.id);
-        } catch (error) {
-          console.error("Wallet OTA notification failed", error.message);
-        }
-      }
-      // The profile submission and TLC identity are already safely stored at
-      // this point. Receipt delivery must never turn that successful write
-      // into a member-facing submission failure.
-      try {
-        const receiptEmail = L.normalizeEmail(changes.email);
-        if (identity && receiptEmail) {
-          let emailOutcome = "not_configured";
-          try {
-            emailOutcome = await sendIdentityReceipt(
-              db,
-              receiptEmail,
-              changes.firstName || matched[0]?.attributes?.first_name,
-              identity,
-              changes,
-              !manual && Boolean(identity.connect_eligible),
-            );
-          } catch (error) {
-            emailOutcome = "failed";
-            console.error("Identity receipt delivery failed", error.message);
-          }
-          if (emailOutcome === "sent")
-            await db.query(
-              "UPDATE tlc_identities SET identity_email_sent_at=now() WHERE id=$1",
-              [identity.id],
-            );
-          await L.audit(
-            db,
+      // A successfully verified person who chose the member/Connect route
+      // receives their member identity and Wallet card immediately. A missing
+      // Connect-list match is retained as an explicit admin flag; it must not
+      // block the member-facing journey.
+      const connect = !recordedConnect
+        ? {}
+        : changes.membershipStatus === "member" && !recordedConnect.eligible
+          ? {
+              ...recordedConnect,
+              eligible: true,
+              completed: false,
+              source: "member_self_declaration",
+              exception: "connect_confirmation_required",
+            }
+          : recordedConnect;
+      const receiptEmail = L.normalizeEmail(changes.email);
+      // One round trip: youcount_save_submission (see api/_lib.js) saves the
+      // record, finds or creates the identity, allocates the YouCount number,
+      // sets the public ID and queues the Wallet update and receipt email, all
+      // in one transaction, so nothing is left half-saved.
+      const saved = (
+        await db.query(
+          "SELECT youcount_save_submission($1,$2,$3,$4,$5,$6,$7::text[],$8,$9::jsonb,$10,$11) AS result",
+          [
             s.id,
             ipHash,
-            "identity_email",
-            null,
-            emailOutcome,
-          );
-        }
-      } catch (error) {
-        console.error("Identity receipt processing failed", error.message);
-      }
+            kind,
+            L.encrypt(matched.map((x) => x.id)),
+            L.encrypt({ changes, choices }),
+            subjectHash,
+            manual ? [] : [...new Set(matched.map((x) => String(x.id)).filter(Boolean))],
+            manual,
+            JSON.stringify({
+              eligible: Boolean(connect.eligible),
+              completed: Boolean(connect.completed),
+              source: connect.source || (connect.found ? "planning_center" : "unconfirmed"),
+              exception: connect.exception || null,
+            }),
+            String(changes.membershipStatus || ""),
+            receiptEmail
+              ? L.encrypt({
+                  email: receiptEmail,
+                  firstName: changes.firstName || matched[0]?.attributes?.first_name,
+                  changes,
+                  walletEligible: !manual,
+                  sessionId: s.id,
+                  ipHash,
+                })
+              : null,
+          ],
+        )
+      )[0].result;
+      const rows = [{ id: saved.recordId, updated: saved.updated }],
+        identity = saved.identity;
+      // The submission and identity are stored. The Wallet update and receipt
+      // email run after the reply on Vercel (waitUntil), so the member does not
+      // wait on Apple or SendGrid; failures are retried by the maintenance job.
+      const followUp = () =>
+        processOutbox(db, { ids: saved.jobs || [] }).catch((error) =>
+          console.error("Outbox processing failed", error.message),
+        );
+      const waitUntil = globalThis[Symbol.for("@vercel/request-context")]?.get?.()?.waitUntil;
+      if (waitUntil) waitUntil(followUp());
+      else await followUp();
       return L.json(res, 200, {
         ok: true,
         recordId: rows[0]?.id,
@@ -2851,6 +2788,7 @@ module.exports = async function handler(req, res) {
 module.exports._createApplePass = createApplePass;
 module.exports._ensureApplePassState = ensureApplePassState;
 module.exports._sendIdentityReceipt = sendIdentityReceipt;
+module.exports.processOutbox = processOutbox;
 module.exports._redesignedIdentityEmail = redesignedIdentityEmail;
 module.exports._identityNextSteps = identityNextSteps;
 module.exports._displayGroupName = displayGroupName;

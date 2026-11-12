@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
     const authorization = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
     const response = await fetch(
       `https://verify.twilio.com/v2/Services/${encodeURIComponent(serviceSid)}`,
-      { headers: { Authorization: `Basic ${authorization}`, Accept: "application/json" } }
+      { signal: AbortSignal.timeout(10000), headers: { Authorization: `Basic ${authorization}`, Accept: "application/json" } }
     );
     if (!response.ok) {
       return res.status(502).json({ ok: false, service: "twilio-verify", reason: "upstream_rejected" });

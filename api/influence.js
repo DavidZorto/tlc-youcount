@@ -144,6 +144,7 @@ async function sendEmailCode(email, code) {
   if (!key) throw new Error("email_not_configured");
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
+    signal: AbortSignal.timeout(15000),
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
@@ -169,6 +170,7 @@ async function sendTwilioEmail(email) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/Verifications`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
@@ -187,6 +189,7 @@ async function checkTwilioEmail(email, code) {
     `https://verify.twilio.com/v2/Services/${encodeURIComponent(service)}/VerificationCheck`,
     {
       method: "POST",
+      signal: AbortSignal.timeout(10000),
       headers: {
         Authorization: `Basic ${Buffer.from(`${sid}:${auth}`).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",

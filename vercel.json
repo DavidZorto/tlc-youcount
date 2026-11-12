@@ -3,7 +3,7 @@
   "functions": {
     "api/member.js": { "includeFiles": "assets/apple-pass/**" },
     "api/admin.js": { "includeFiles": "assets/apple-pass/**" },
-    "api/maintenance.js": { "maxDuration": 300 }
+    "api/maintenance.js": { "maxDuration": 300, "includeFiles": "assets/apple-pass/**" }
   },
   "rewrites": [
     { "source": "/data", "destination": "/index.html" },
